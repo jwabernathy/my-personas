@@ -3,17 +3,38 @@
   if (window.__CHATUI_LOADED) return;
   window.__CHATUI_LOADED = true;
 
-  // Point to your my-personas repo
-  const GITHUB_BASE =
-    'https://raw.githubusercontent.com/jwabernathy/my-personas/main';
-  const PERSONA_FILES = ['Aoi.json', 'Eleanor.json', 'Leticia.json'];
-  const CACHE_TTL      = 1000 * 60 * 5; // 5 minutes
+  // Safe storage: try localStorage, else use an in-memory object
+  const STORAGE = (() => {
+    try {
+      const testKey = '__chatui_test__';
+      window.localStorage.setItem(testKey, testKey);
+      window.localStorage.removeItem(testKey);
+      return window.localStorage;
+    } catch (err) {
+      console.warn('[CHATUI] localStorage unavailable, using in-memory store', err);
+      const store = {};
+      return {
+        getItem: key => (key in store ? store[key] : null),
+        setItem: (key, val) => { store[key] = val; },
+        removeItem: key => { delete store[key]; }
+      };
+    }
+  })();
 
-  // Utility: fetch + cache JSON from GitHub
+  const GITHUB_BASE   = 'https://raw.githubusercontent.com/jwabernathy/my-personas/main';
+  const PERSONA_FILES = ['Aoi.json', 'Eleanor.json', 'Leticia.json'];
+  const CACHE_TTL     = 1000 * 60 * 5; // 5 minutes
+
+  // Fetch JSON with caching
   async function fetchJSON(file) {
     const url = `${GITHUB_BASE}/${file}`;
     const key = `cache:${url}`;
-    const stored = JSON.parse(localStorage.getItem(key) || '{}');
+    let stored;
+    try {
+      stored = JSON.parse(STORAGE.getItem(key) || '{}');
+    } catch {
+      stored = {};
+    }
     if (stored.ts > Date.now() - CACHE_TTL) {
       console.log(`[CHATUI] cache hit ${file}`);
       return stored.data;
@@ -21,11 +42,11 @@
     console.log(`[CHATUI] fetching ${file}`);
     const res  = await fetch(url);
     const data = await res.json();
-    localStorage.setItem(key, JSON.stringify({ ts: Date.now(), data }));
+    STORAGE.setItem(key, JSON.stringify({ ts: Date.now(), data }));
     return data;
   }
 
-  // Load all personas into memory
+  // Load persona definitions
   const personas = {};
   (async () => {
     for (const file of PERSONA_FILES) {
@@ -39,14 +60,15 @@
     initUI();
   })();
 
-  // Build and inject the chat widget
+  // Build and inject the widget
   function initUI() {
     const style = document.createElement('style');
     style.textContent = `
       #chatui-widget { position: fixed; bottom: 20px; right: 20px;
         width: 320px; height: 420px; background: #fff;
         border: 1px solid #ccc; display: flex; flex-direction: column;
-        font-family: sans-serif; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        font-family: sans-serif; box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        z-index: 2147483647; }
       #chatui-header { padding: 8px; background: #333; color: #fff;
         display: flex; align-items: center; }
       #chatui-header select { flex: 1; margin-right: 8px; }
@@ -64,8 +86,7 @@
     widget.innerHTML = `
       <div id="chatui-header">
         <select id="chatui-persona">
-          ${Object.keys(personas).map(name =>
-            `<option>${name}</option>`).join('')}
+          ${Object.keys(personas).map(n => `<option>${n}</option>`).join('')}
         </select>
         <button id="chatui-close">✕</button>
       </div>
@@ -77,13 +98,14 @@
     `;
     document.body.appendChild(widget);
 
-    widget.querySelector('#chatui-close')
-      .onclick = () => widget.style.display = 'none';
+    widget.querySelector('#chatui-close').onclick = () => {
+      widget.style.display = 'none';
+    };
 
     const sendBtn = widget.querySelector('#chatui-input button');
-    const input   = widget.querySelector('#chatui-input textarea');
-    sendBtn.onclick = () => sendMessage();
-    input.onkeydown = e => {
+    const inputEl = widget.querySelector('#chatui-input textarea');
+    sendBtn.onclick = sendMessage;
+    inputEl.onkeydown = e => {
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
         sendMessage();
@@ -91,35 +113,40 @@
     };
   }
 
-  // Render a message to the chat window
+  // Append a chat bubble
   function appendMessage(role, text) {
     const container = document.getElementById('chatui-messages');
-    const msg       = document.createElement('div');
+    const msg = document.createElement('div');
     msg.textContent = (role === 'user' ? 'You: ' : 'Bot: ') + text;
     msg.style.margin = '6px 0';
     container.appendChild(msg);
     msg.scrollIntoView({ behavior: 'smooth' });
   }
 
-  // Send user text to your GPT-2 endpoint and handle memory
+  // Send input to GPT-2 endpoint and manage memory
   async function sendMessage() {
-    const sel       = document.getElementById('chatui-persona');
-    const persona   = personas[sel.value];
-    const inputEl   = document.querySelector('#chatui-input textarea');
-    const userText  = inputEl.value.trim();
+    const sel      = document.getElementById('chatui-persona');
+    const persona  = personas[sel.value];
+    const inputEl  = document.querySelector('#chatui-input textarea');
+    const userText = inputEl.value.trim();
     if (!userText) return;
 
     appendMessage('user', userText);
     inputEl.value = '';
 
-    // Load and format memory
+    // Load memory array
     const memKey = `mem:${persona.name}`;
-    const memArr = JSON.parse(localStorage.getItem(memKey) || '[]');
+    let memArr;
+    try {
+      memArr = JSON.parse(STORAGE.getItem(memKey) || '[]');
+    } catch {
+      memArr = [];
+    }
     const memBlock = memArr.length
       ? `\n\nMemory:\n- ${memArr.join('\n- ')}`
       : '';
 
-    // Build the system prompt
+    // Build system prompt
     const sysPrompt = [
       `You are ${persona.name} – ${persona.title}.`,
       persona.corePurpose,
@@ -128,8 +155,8 @@
     ].filter(Boolean).join('\n\n');
     const fullPrompt = `${sysPrompt}\n\nUser: ${userText}\nAssistant:`;
 
-    // Query your GPT-2 API
-    const resp = await fetch('http://127.0.0.1:5000/v1/completions', {
+    // Query GPT-2
+    const res = await fetch('http://127.0.0.1:5000/v1/completions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -140,12 +167,12 @@
         stop: ['\nUser:', '\nAssistant:']
       })
     });
-    const data  = await resp.json();
+    const data  = await res.json();
     const reply = (data.choices?.[0]?.text || '').trim();
     appendMessage('assistant', reply);
 
-    // Extract a memory fact to save
-    const memResp = await fetch('http://127.0.0.1:5000/v1/completions', {
+    // Extract one memory fact
+    const memRes = await fetch('http://127.0.0.1:5000/v1/completions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -156,11 +183,11 @@
         stop: ['\n']
       })
     });
-    const memData = await memResp.json();
+    const memData = await memRes.json();
     const fact    = (memData.choices?.[0]?.text || '').trim();
     if (fact) {
       memArr.push(fact);
-      localStorage.setItem(memKey, JSON.stringify(memArr));
+      STORAGE.setItem(memKey, JSON.stringify(memArr));
     }
   }
 })();
