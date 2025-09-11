@@ -5,7 +5,7 @@
 
   // Point to your my-personas repo
   const GITHUB_BASE =
-    'https://raw.githubusercontent.com/your-username/my-personas/main';
+    'https://raw.githubusercontent.com/jwabernathy/my-personas/main';
   const PERSONA_FILES = ['Aoi.json', 'Eleanor.json', 'Leticia.json'];
   const CACHE_TTL      = 1000 * 60 * 5; // 5 minutes
 
