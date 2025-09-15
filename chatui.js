@@ -15,12 +15,12 @@
       ls.removeItem(testKey);
       STORAGE = ls;
       console.log('[CHATUI] localStorage available');
-    } catch (err) {
-      console.warn('[CHATUI] localStorage unavailable, using in-memory store', err);
+    } catch {
+      console.warn('[CHATUI] localStorage unavailable, using in-memory store');
       const mem = {};
       STORAGE = {
-        getItem:    key => (key in mem ? mem[key] : null),
-        setItem:    (key, val) => { mem[key] = val; },
+        getItem: key => (key in mem ? mem[key] : null),
+        setItem: (key, val) => { mem[key] = val; },
         removeItem: key => { delete mem[key]; }
       };
     }
@@ -39,22 +39,15 @@
   async function fetchJSON(file) {
     const url = `${JSON_BASE}/${file}`;
     const key = `cache:${url}`;
-
-    let stored;
+    let stored = {};
     try {
       stored = JSON.parse(STORAGE.getItem(key) || '{}');
-    } catch {
-      stored = {};
-    }
+    } catch {}
     if (stored.ts > Date.now() - CACHE_TTL) {
-      console.log(`[CHATUI] cache hit ${file}`);
       return stored.data;
     }
-
-    console.log(`[CHATUI] fetching ${file}`);
     const res  = await fetch(url);
     const data = await res.json();
-
     try {
       STORAGE.setItem(key, JSON.stringify({ ts: Date.now(), data }));
     } catch {}
@@ -120,7 +113,6 @@
     widget.querySelector('#chatui-close').onclick = () => {
       widget.style.display = 'none';
     };
-
     const sendBtn = widget.querySelector('#chatui-input button');
     const inputEl = widget.querySelector('#chatui-input textarea');
     sendBtn.onclick  = sendMessage;
@@ -148,8 +140,6 @@
   // 7) SEND MESSAGE + MEMORY
   //
   async function sendMessage() {
-    console.log('[CHATUI] sendMessage() called');
-
     const sel      = document.getElementById('chatui-persona');
     const persona  = personas[sel.value];
     const inputEl  = document.querySelector('#chatui-input textarea');
@@ -159,19 +149,18 @@
     appendMessage('user', userText);
     inputEl.value = '';
 
-    // Load memory
+    // load memory
     const memKey = `mem:${persona.name}`;
-    let memArr;
+    let memArr = [];
     try {
       memArr = JSON.parse(STORAGE.getItem(memKey) || '[]');
-    } catch {
-      memArr = [];
-    }
+    } catch {}
+
     const memBlock = memArr.length
-      ? `\n\nMemory:\n- ${memArr.join('\n- ')}`
+      ? '\n\nMemory:\n- ' + memArr.join('\n- ')
       : '';
 
-    // Build prompt
+    // build prompts
     const sysPrompt = [
       `You are ${persona.name} – ${persona.title}.`,
       persona.corePurpose,
@@ -180,18 +169,15 @@
     ].filter(Boolean).join('\n\n');
     const fullPrompt = `${sysPrompt}\n\nUser: ${userText}\nAssistant:`;
 
-    // chatui.js — inside sendMessage()
-const apiUrl = 'http://127.0.0.1:11435/v1/completions';
-
-const payload = {
-  model: 'llama2:13b',
-  prompt: fullPrompt,
-  max_tokens: 100,
-  temperature: 0.7,
-  stop: ['\nUser:', '\nAssistant:']
-};
+    // call Ollama API
+    const apiUrl = 'http://127.0.0.1:11435/v1/completions';
+    const payload = {
+      model: 'llama2:13b',
+      prompt: fullPrompt,
+      max_tokens: 100,
+      temperature: 0.7,
+      stop: ['\nUser:', '\nAssistant:']
     };
-    console.log('[CHATUI] sending to API:', payload);
 
     const res    = await fetch(apiUrl, {
       method:  'POST',
@@ -200,15 +186,16 @@ const payload = {
     });
     const result = await res.json();
     console.log('[CHATUI] raw API response:', result);
-
-    const reply = (result.generations?.[0]?.text || '').trim();
+    const reply = (result.choices?.[0]?.text || '').trim();
     appendMessage('assistant', reply);
 
-    // Extract one memory fact
+    // extract one memory fact
     const memPayload = {
-      model: 'gpt2',
-      inputs: `${sysPrompt}\n\nUser: ${userText}\nAssistant: ${reply}\n\nWhat’s one brief fact to remember?`,
-      parameters: { max_new_tokens: 20, temperature: 0.5, stop: ['\n'] }
+      model: 'llama2:13b',
+      prompt: `${sysPrompt}\n\nUser: ${userText}\nAssistant: ${reply}\n\nWhat’s one brief fact to remember?`,
+      max_tokens: 20,
+      temperature: 0.5,
+      stop: ['\n']
     };
     const memRes    = await fetch(apiUrl, {
       method:  'POST',
@@ -216,7 +203,7 @@ const payload = {
       body:    JSON.stringify(memPayload)
     });
     const memResult = await memRes.json();
-    const fact      = (memResult.generations?.[0]?.text || '').trim();
+    const fact      = (memResult.choices?.[0]?.text || '').trim();
 
     if (fact) {
       memArr.push(fact);
