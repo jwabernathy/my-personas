@@ -180,16 +180,16 @@
     ].filter(Boolean).join('\n\n');
     const fullPrompt = `${sysPrompt}\n\nUser: ${userText}\nAssistant:`;
 
-    // Call your Text-Generation WebUI API
-    const apiUrl = 'http://127.0.0.1:5000/api/v1/generate';
-    const payload = {
-      model: 'gpt2',
-      inputs: fullPrompt,
-      parameters: {
-        max_new_tokens: 80,
-        temperature:      0.7,
-        stop:            ['\nUser:', '\nAssistant:']
-      }
+    // chatui.js — inside sendMessage()
+const apiUrl = 'http://127.0.0.1:11435/v1/completions';
+
+const payload = {
+  model: 'llama2:13b',
+  prompt: fullPrompt,
+  max_tokens: 100,
+  temperature: 0.7,
+  stop: ['\nUser:', '\nAssistant:']
+};
     };
     console.log('[CHATUI] sending to API:', payload);
 
