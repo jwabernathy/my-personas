@@ -29,7 +29,7 @@
   //
   const JSON_BASE     = 'https://raw.githubusercontent.com/jwabernathy/my-personas/main';
   const PERSONA_FILES = ['Aoi.json', 'Eleanor.json', 'Leticia.json'];
-  const CACHE_TTL     = 1000 * 60 * 5;
+  const CACHE_TTL     = 1000 * 60 * 5;  // 5 minutes
 
   //
   // 3) FETCH + CACHE LOGIC
@@ -62,7 +62,7 @@
         const json = await fetchJSON(file);
         personas[json.name] = json;
       } catch (err) {
-        console.error(`Failed to load ${file}`, err);
+        console.error(`[CHATUI] failed to load ${file}`, err);
       }
     }
     initUI();
@@ -147,6 +147,7 @@
     appendMessage('user', userText);
     inputEl.value = '';
 
+    // Load memory
     const memKey = `mem:${persona.name}`;
     let memArr = [];
     try {
@@ -157,6 +158,7 @@
       ? '\n\nMemory:\n- ' + memArr.join('\n- ')
       : '';
 
+    // Build prompts
     const sysPrompt = [
       `You are ${persona.name} – ${persona.title}.`,
       persona.corePurpose,
@@ -166,14 +168,13 @@
 
     const fullPrompt = `${sysPrompt}\n\nUser: ${userText}\nAssistant:`;
 
-    // Main chat payload: higher token limit and single stop
+    // Main chat payload: no stop sequence, high token limit
     const apiUrl = 'http://127.0.0.1:11435/v1/completions';
     const payload = {
       model: 'llama2:13b',
       prompt: fullPrompt,
-      max_tokens: 200,
-      temperature: 0.7,
-      stop: ['\nUser:']
+      max_tokens: 512,
+      temperature: 0.7
     };
 
     const res    = await fetch(apiUrl, {
