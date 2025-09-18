@@ -10,14 +10,13 @@
   (() => {
     try {
       const ls = window.localStorage;
-      const testKey = '__chatui_ls_test__';
-      ls.setItem(testKey, testKey);
-      ls.removeItem(testKey);
+      ls.setItem('__chatui_ls_test__', 'test');
+      ls.removeItem('__chatui_ls_test__');
       STORAGE = ls;
     } catch {
       const mem = {};
       STORAGE = {
-        getItem: key => (key in mem ? mem[key] : null),
+        getItem: key => mem[key] || null,
         setItem: (key, val) => { mem[key] = val; },
         removeItem: key => { delete mem[key]; }
       };
@@ -38,9 +37,7 @@
     const url = `${JSON_BASE}/${file}`;
     const key = `cache:${url}`;
     let stored = {};
-    try {
-      stored = JSON.parse(STORAGE.getItem(key) || '{}');
-    } catch {}
+    try { stored = JSON.parse(STORAGE.getItem(key) || '{}'); } catch {}
     if (stored.ts > Date.now() - CACHE_TTL) {
       return stored.data;
     }
@@ -137,7 +134,6 @@
       msg.style.margin = '6px 0';
       container.appendChild(msg);
     } else {
-      // update existing message
       msg.textContent += text;
     }
     msg.scrollIntoView({ behavior: 'smooth' });
@@ -159,9 +155,7 @@
     // Build memory block
     const memKey = `mem:${persona.name}`;
     let memArr = [];
-    try {
-      memArr = JSON.parse(STORAGE.getItem(memKey) || '[]');
-    } catch {}
+    try { memArr = JSON.parse(STORAGE.getItem(memKey) || '[]'); } catch {}
     const memBlock = memArr.length
       ? '\n\nMemory:\n- ' + memArr.join('\n- ')
       : '';
@@ -187,26 +181,49 @@
 
     const response = await fetch(apiUrl, {
       method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'text/event-stream'
+      },
       body:    JSON.stringify(payload)
     });
 
-    // Start streaming
+    // Placeholder for streaming text
+    appendMessage('assistant', '', false);
+
+    // SSE‐style parsing
     const reader  = response.body.getReader();
     const decoder = new TextDecoder();
-    let done = false;
-    appendMessage('assistant', '', false); // placeholder
+    let buffer = '';
+    let done   = false;
+
     while (!done) {
       const { value, done: readerDone } = await reader.read();
       done = readerDone;
       if (value) {
-        const chunk = decoder.decode(value, { stream: true });
-        appendMessage('assistant', chunk, true);
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n\n');
+        buffer = lines.pop();  // keep incomplete chunk
+
+        for (const line of lines) {
+          // lines come as "data: {...}"
+          if (!line.startsWith('data: ')) continue;
+          const jsonStr = line.slice('data: '.length);
+          if (jsonStr === '[DONE]') {
+            done = true;
+            break;
+          }
+          try {
+            const msg = JSON.parse(jsonStr);
+            const chunk = msg.choices?.[0]?.text;
+            if (chunk) appendMessage('assistant', chunk, true);
+          } catch (err) {
+            console.error('Failed to parse chunk', err, jsonStr);
+          }
+        }
       }
     }
 
-    // After full reply, you can still extract memory if desired...
-    // (Reuse the old memPayload logic here)
+    // (Optionally: extract and store one memory fact here)
   }
-
 })();
