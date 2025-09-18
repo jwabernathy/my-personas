@@ -14,9 +14,7 @@
       ls.setItem(testKey, testKey);
       ls.removeItem(testKey);
       STORAGE = ls;
-      console.log('[CHATUI] localStorage available');
     } catch {
-      console.warn('[CHATUI] localStorage unavailable, using in-memory store');
       const mem = {};
       STORAGE = {
         getItem: key => (key in mem ? mem[key] : null),
@@ -31,7 +29,7 @@
   //
   const JSON_BASE     = 'https://raw.githubusercontent.com/jwabernathy/my-personas/main';
   const PERSONA_FILES = ['Aoi.json', 'Eleanor.json', 'Leticia.json'];
-  const CACHE_TTL     = 1000 * 60 * 5;  // 5 minutes
+  const CACHE_TTL     = 1000 * 60 * 5;
 
   //
   // 3) FETCH + CACHE LOGIC
@@ -64,7 +62,7 @@
         const json = await fetchJSON(file);
         personas[json.name] = json;
       } catch (err) {
-        console.error(`[CHATUI] failed to load ${file}`, err);
+        console.error(`Failed to load ${file}`, err);
       }
     }
     initUI();
@@ -149,7 +147,6 @@
     appendMessage('user', userText);
     inputEl.value = '';
 
-    // load memory
     const memKey = `mem:${persona.name}`;
     let memArr = [];
     try {
@@ -160,23 +157,23 @@
       ? '\n\nMemory:\n- ' + memArr.join('\n- ')
       : '';
 
-    // build prompts
     const sysPrompt = [
       `You are ${persona.name} – ${persona.title}.`,
       persona.corePurpose,
       memBlock,
       'Speak with warmth and clarity.'
     ].filter(Boolean).join('\n\n');
+
     const fullPrompt = `${sysPrompt}\n\nUser: ${userText}\nAssistant:`;
 
-    // call Ollama API
+    // Main chat payload: higher token limit and single stop
     const apiUrl = 'http://127.0.0.1:11435/v1/completions';
     const payload = {
       model: 'llama2:13b',
       prompt: fullPrompt,
-      max_tokens: 100,
+      max_tokens: 200,
       temperature: 0.7,
-      stop: ['\nUser:', '\nAssistant:']
+      stop: ['\nUser:']
     };
 
     const res    = await fetch(apiUrl, {
@@ -185,18 +182,18 @@
       body:    JSON.stringify(payload)
     });
     const result = await res.json();
-    console.log('[CHATUI] raw API response:', result);
-    const reply = (result.choices?.[0]?.text || '').trim();
+    const reply  = (result.choices?.[0]?.text || '').trim();
     appendMessage('assistant', reply);
 
-    // extract one memory fact
+    // Memory extraction payload
     const memPayload = {
       model: 'llama2:13b',
       prompt: `${sysPrompt}\n\nUser: ${userText}\nAssistant: ${reply}\n\nWhat’s one brief fact to remember?`,
-      max_tokens: 20,
+      max_tokens: 40,
       temperature: 0.5,
       stop: ['\n']
     };
+
     const memRes    = await fetch(apiUrl, {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
