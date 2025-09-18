@@ -172,12 +172,13 @@
     // Stream-enabled payload
     const apiUrl = 'http://127.0.0.1:11435/v1/completions';
     const payload = {
-      model: 'llama2:13b',
-      prompt: fullPrompt,
-      max_tokens: 1024,
-      temperature: 0.7,
-      stream: true
-    };
+  model: 'llama2:13b',
+  prompt: fullPrompt,
+  max_tokens: 1024,        // OpenAI‐style limit
+  max_new_tokens: 1024,    // also tell Ollama “n_predict = 1024”
+  temperature: 0.7,
+  stream: true
+};
 
     const response = await fetch(apiUrl, {
       method:  'POST',
