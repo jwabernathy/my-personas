@@ -10,9 +10,8 @@
   (() => {
     try {
       const ls = window.localStorage;
-      const testKey = '__chatui_ls_test__';
-      ls.setItem(testKey, testKey);
-      ls.removeItem(testKey);
+      ls.setItem('__chatui_ls_test__', 'test');
+      ls.removeItem('__chatui_ls_test__');
       STORAGE = ls;
     } catch {
       const mem = {};
@@ -137,51 +136,22 @@
       msg.textContent += text;
     }
     msg.scrollIntoView({ behavior: 'smooth' });
+    return msg;
   }
 
   //
-  // 7) SEND MESSAGE & STREAMING WITH SSE PARSING
+  // 7) STREAM HELPER
   //
-  async function sendMessage() {
-    const selectEl = document.getElementById('chatui-persona');
-    const persona  = personas[selectEl.value];
-    const inputEl  = document.querySelector('#chatui-input textarea');
-    const userText = inputEl.value.trim();
-    if (!userText) return;
-
-    appendMessage('user', userText);
-    inputEl.value = '';
-
-    // Load memory
-    const memKey = `mem:${persona.name}`;
-    let memArr = [];
-    try { memArr = JSON.parse(STORAGE.getItem(memKey) || '[]'); } catch {}
-
-    const memBlock = memArr.length
-      ? '\n\nMemory:\n- ' + memArr.join('\n- ')
-      : '';
-
-    // Build system prompt
-    const sysPrompt = [
-      `You are ${persona.name} – ${persona.title}.`,
-      persona.corePurpose,
-      memBlock,
-      'Speak with warmth and clarity.'
-    ].filter(Boolean).join('\n\n');
-
-    const fullPrompt = `${sysPrompt}\n\nUser: ${userText}\nAssistant:`;
-
+  async function streamToElement(prompt, el) {
     const apiUrl = 'http://127.0.0.1:11435/v1/completions';
     const payload = {
       model:          'llama2:13b',
-      prompt:         fullPrompt,
+      prompt,
       max_tokens:     1024,
       max_new_tokens: 1024,
       temperature:    0.7,
       stream:         true
     };
-
-    // Fetch with streaming
     const response = await fetch(apiUrl, {
       method: 'POST',
       headers: {
@@ -191,18 +161,15 @@
       body: JSON.stringify(payload)
     });
 
-    // SSE parsing loop
     const reader  = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
     let done   = false;
-
-    // Placeholder for bot message
-    appendMessage('assistant', '', false);
+    let full   = '';
 
     while (!done) {
-      const { value, done: readerDone } = await reader.read();
-      done = readerDone;
+      const { value, done: rd } = await reader.read();
+      done = rd;
       if (!value) continue;
 
       buffer += decoder.decode(value, { stream: true });
@@ -219,9 +186,10 @@
         }
         try {
           const msg = JSON.parse(payload);
-          const chunk = msg.choices?.[0]?.text;
+          const chunk = msg.choices?.[0]?.text || '';
           if (chunk) {
-            appendMessage('assistant', chunk, true);
+            full += chunk;
+            el.textContent += chunk;
           }
         } catch (err) {
           console.error('SSE parse error:', err, payload);
@@ -229,11 +197,62 @@
       }
     }
 
-    // Memory extraction (optional)
+    return full;
+  }
+
+  //
+  // 8) SEND MESSAGE WITH AUTO-CONTINUE
+  //
+  async function sendMessage() {
+    const personaSel = document.getElementById('chatui-persona');
+    const P = personas[personaSel.value];
+    const inputEl = document.querySelector('#chatui-input textarea');
+    const userText = inputEl.value.trim();
+    if (!userText) return;
+
+    // 1) Show user message
+    appendMessage('user', userText);
+    inputEl.value = '';
+
+    // 2) Build system prompt + memory
+    const memKey = `mem:${P.name}`;
+    let memArr = [];
+    try { memArr = JSON.parse(STORAGE.getItem(memKey) || '[]'); } catch {}
+
+    const memBlock = memArr.length
+      ? '\n\nMemory:\n- ' + memArr.join('\n- ')
+      : '';
+
+    const sysPrompt = [
+      `You are ${P.name} – ${P.title}.`,
+      P.corePurpose,
+      memBlock,
+      'Speak with warmth and clarity.'
+    ].filter(Boolean).join('\n\n');
+
+    // 3) First streaming pass
+    const basePrompt = `${sysPrompt}\n\nUser: ${userText}\nAssistant:`;
+    const botEl = appendMessage('assistant', '', false);
+    let accumulated = await streamToElement(basePrompt, botEl);
+
+    // 4) Auto-continue until sentence ends
+    while (!/[.?!]$/.test(accumulated.trim())) {
+      const contPrompt = [
+        sysPrompt,
+        `User: ${userText}`,
+        `Assistant: ${accumulated.trim()}`,
+        `User: Please continue the above answer without repeating yourself.`
+      ].join('\n\n');
+      // leave botEl as-is, append next stream
+      const more = await streamToElement(contPrompt, botEl);
+      accumulated += more;
+    }
+
+    // 5) (Optional) Extract and store a memory fact
     try {
-      const factPrompt = `${sysPrompt}\n\nUser: ${userText}\nAssistant: ${buffer}\n\nWhat’s one brief fact to remember?`;
-      const factRes = await fetch(apiUrl, {
-        method:  'POST',
+      const factPrompt = `${sysPrompt}\n\nUser: ${userText}\nAssistant: ${accumulated}\n\nWhat’s one brief fact to remember?`;
+      const resFact = await fetch('http://127.0.0.1:11435/v1/completions', {
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           model:       'llama2:13b',
@@ -242,14 +261,14 @@
           temperature: 0.5
         })
       });
-      const factJson = await factRes.json();
-      const fact = (factJson.choices?.[0]?.text || '').trim();
+      const j = await resFact.json();
+      const fact = (j.choices?.[0]?.text || '').trim();
       if (fact) {
         memArr.push(fact);
         STORAGE.setItem(memKey, JSON.stringify(memArr));
       }
     } catch {
-      // memory extraction failed, ignore
+      // ignore memory errors
     }
   }
 
